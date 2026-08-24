@@ -47,9 +47,9 @@
   #btnBussola.attivo{color:var(--verde);border-color:var(--verde);}
 
   #btnStopPunta{position:fixed;left:50%;transform:translateX(-50%);
-    bottom:calc(env(safe-area-inset-bottom,0) + 96px);z-index:16;
+    top:calc(env(safe-area-inset-top,0) + 44px);z-index:16;
     background:rgba(120,40,40,0.85);border:1px solid rgba(220,120,120,0.6);
-    color:#fcc;border-radius:20px;padding:9px 18px;font-size:13px;font-weight:600;
+    color:#fcc;border-radius:20px;padding:8px 18px;font-size:13px;font-weight:600;
     display:none;align-items:center;gap:6px;backdrop-filter:blur(8px);
     box-shadow:0 4px 16px rgba(0,0,0,0.4);}
   #btnStopPunta.mostra{display:flex;}
@@ -405,12 +405,16 @@ function visibileOra(ar,dec){
 // ritorna {ar,dec} o null
 function eqOggetto(o){
   if(o.tipo==="pianeta") return eqPianeta(o.nome);
-  if(o.tipo==="satellite" && o.calcPos){ const r=o.calcPos(); return r; }
+  if(o.tipo==="satellite"){
+    // calcPos può essersi persa nella serializzazione: la ricostruisco dai TLE
+    if(o.calcPos) return o.calcPos();
+    if(o.l1 && o.l2) return calcolaSatellite(o.l1, o.l2);
+    return null;
+  }
   return {ar:o.ar, dec:o.dec};
 }
 function altAzOggetto(o){
   const e=eqOggetto(o); if(!e) return null;
-  // i satelliti restituiscono già alt/az (non ar/dec)
   if(e.satAltAz) return {alt:e.satAltAz.alt, az:e.satAltAz.az};
   return eqAA(e.ar, e.dec);
 }
@@ -699,7 +703,7 @@ function disegnaOrizzonte(){
 // pannello indicazioni testuali "destra/sinistra alza/abbassa di tot gradi"
 function disegnaIndicazioni(dAz, dAlt, scarto){
   const cx=W/2;
-  const y0=H-170;  // sopra la barra di navigazione
+  const y0=H-185;  // sopra la barra di navigazione
   ctx.save();
   // sfondo box
   ctx.fillStyle="rgba(10,18,40,0.82)";
@@ -880,7 +884,7 @@ function oggettiCategoria(cat){
     arr=src.map(m=>({tipo:"nebulosa",nome:m[3],ar:m[0],dec:m[1],mag:m[2],sottotipo:m[4]||""}))
       .sort((a,b)=>(a.mag||99)-(b.mag||99));
   }
-  else if(cat==="satelliti") arr=(SATELLITI||[]).map(s=>({tipo:"satellite",nome:s.nome,calcPos:s.calcPos}));
+  else if(cat==="satelliti") arr=(SATELLITI||[]).map(s=>({tipo:"satellite",nome:s.nome,l1:s.l1,l2:s.l2,calcPos:s.calcPos}));
   else if(cat==="sciami") arr=SCIAMI.map(s=>({tipo:"sciame",nome:s[0],ar:s[1],dec:s[2],picco:s[3],note:s[4]}));
   return arr;
 }
