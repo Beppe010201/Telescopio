@@ -462,8 +462,10 @@ function impostaOrientamento(azGrezzo, altGrezzo){
   if(seguiTelescopio && scopeAz!=null){ viewAz=scopeAz; viewAlt=scopeAlt; }
 }
 
-// --- sensori TELEFONO (versione attuale) ---
+// --- sensori TELEFONO (usati solo se l'ESP32 non è connesso) ---
 function orientDaTelefono(ev){
+  // se l'ESP32 ha mandato dati di recente (<3s), ignoro il telefono
+  if(typeof ultimoDatoEsp!=="undefined" && Date.now()-ultimoDatoEsp < 3000) return;
   let az=null;
   if(typeof ev.webkitCompassHeading==="number") az=ev.webkitCompassHeading;
   else if(ev.alpha!=null) az=n360(360-ev.alpha);
@@ -512,6 +514,65 @@ function proietta(az,alt){
   const rp=Math.tan(ang*0.82)/(d||1);
   return{x:W/2+x*rp*s,y:H/2-y*rp*s,z,ang};
 }
+
+// ============================================================
+//   CONNESSIONE ESP32 via WebSocket
+//   Riceve inclinazione + azimut dai sensori del telescopio
+//   e li passa a impostaOrientamento() (punto d'ingresso unico)
+// ============================================================
+let wsEsp = null;
+let espConnesso = false;
+let espIP = "";
+let ultimoDatoEsp = 0;
+const FORZA_MAG_MIN = 1000;  // sotto questa, azimut non affidabile
+let ultimoAzimutBuono = null;
+
+// carico l'IP salvato
+try{ espIP = localStorage.getItem("espIP") || ""; }catch(e){}
+
+function connettiEsp(ip){
+  if(ip) espIP = ip;
+  if(!espIP){ return; }
+  try{ localStorage.setItem("espIP", espIP); }catch(e){}
+
+  // chiudo eventuale connessione precedente
+  if(wsEsp){ try{ wsEsp.close(); }catch(e){} wsEsp=null; }
+
+  try{
+    wsEsp = new WebSocket("ws://" + espIP + "/ws");
+    wsEsp.onopen = ()=>{ espConnesso = true; aggiornaStatoEsp(); };
+    wsEsp.onclose = ()=>{ espConnesso = false; aggiornaStatoEsp();
+      // riprovo tra 2 secondi
+      setTimeout(()=>{ if(espIP) connettiEsp(); }, 2000); };
+    wsEsp.onerror = ()=>{ espConnesso = false; aggiornaStatoEsp(); };
+    wsEsp.onmessage = (e)=>{
+      try{
+        const d = JSON.parse(e.data);
+        ultimoDatoEsp = Date.now();
+        // azimut: uso solo se il magnete è affidabile
+        let az = d.azim;
+        if(d.mag != null && d.mag < FORZA_MAG_MIN){
+          az = (ultimoAzimutBuono != null) ? ultimoAzimutBuono : d.azim;
+        } else {
+          ultimoAzimutBuono = d.azim;
+        }
+        // PUNTO D'INGRESSO UNICO: passo azimut e inclinazione(=altezza) alla mappa
+        impostaOrientamento(az, d.incl);
+      }catch(err){}
+    };
+  }catch(e){ espConnesso=false; aggiornaStatoEsp(); }
+}
+
+function aggiornaStatoEsp(){
+  const el = document.getElementById("statoEsp");
+  if(el){
+    if(espConnesso) el.innerHTML = '<span style="color:#22dd66">● telescopio connesso</span>';
+    else el.innerHTML = '<span style="color:#ff8844">○ telescopio non connesso</span>';
+  }
+}
+
+// prova a connettersi all'avvio se ho un IP salvato
+if(espIP){ setTimeout(()=>connettiEsp(), 1500); }
 
 let stelleSchermo=[], nomiCostSchermo=[];
 
@@ -1073,6 +1134,15 @@ document.getElementById("cercaAllinea").oninput=function(){renderAllinea(this.va
 function costruisciSetup(){
   const b=document.getElementById("setupBody");
   b.innerHTML=`
+    <div style="padding:8px 0;border-bottom:1px solid rgba(120,160,230,0.15)">
+      <div class="et" style="color:#5a7bb5;font-size:11px">TELESCOPIO (ESP32)</div>
+      <div class="val" id="statoEsp" style="margin:6px 0;font-size:13px">○ non connesso</div>
+      <input id="inputEspIP" inputmode="decimal" placeholder="es. 192.168.1.50" value="${espIP}"
+        style="width:100%;background:rgba(10,18,40,0.8);border:1px solid var(--bordo);border-radius:10px;padding:10px 12px;color:#dce8ff;font-size:14px;font-family:inherit;margin-top:4px">
+      <button onclick="connettiEsp(document.getElementById('inputEspIP').value.trim());setTimeout(costruisciSetup,300)"
+        style="background:rgba(50,80,160,0.7);border:1px solid var(--bordo);color:#fff;border-radius:10px;padding:10px 16px;font-family:inherit;font-size:14px;margin-top:8px;width:100%">Connetti al telescopio</button>
+      <div class="piccolo" style="font-size:11px;color:#5a7bb5;margin-top:6px">Inserisci l'IP che appare nel monitor seriale dell'ESP32. Quando è connesso, la mappa si muove col telescopio invece che col telefono.</div>
+    </div>
     <div style="padding:8px 0">
       <div class="et" style="color:#5a7bb5;font-size:11px">POSIZIONE</div>
       <div class="val" id="setPos" style="margin:6px 0">${lat!=null?lat.toFixed(3)+", "+lon.toFixed(3):"non rilevata"}</div>
